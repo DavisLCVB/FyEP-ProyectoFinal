@@ -80,14 +80,28 @@ class SimuladorProyectos:
         return max(1, round(duracion_promedio))
     
     def generar_monto(self, duracion):
-        """Genera monto basado en la duración del proyecto"""
-        # Tarifa base por día: 400-800 soles
-        tarifa_base = random.randint(400, 800)
-        # Costo fijo adicional
-        costo_fijo = random.randint(500, 2000)
-        monto = duracion * tarifa_base + costo_fijo
-        # Redondear a centenas
-        return round(monto / 100) * 100
+        """Genera monto basado en el promedio real con variación y ajuste por tiempo"""
+        # Monto base: promedio de datos reales (S/. 7,250)
+        monto_base = self.datos_reales['monto_promedio_proyecto']
+        
+        # Variación principal aleatoria (±50% del promedio real)
+        variacion_principal = random.uniform(-0.5, 0.8)  # Permite proyectos hasta 80% más caros
+        monto_variado = monto_base * (1 + variacion_principal)
+        
+        # Ajuste sutil por tiempo (±10% basado en duración)
+        factor_tiempo = 1 + (duracion - 8) * 0.015  # Si dura más de 8 días, sube ligeramente
+        monto_ajustado = monto_variado * factor_tiempo
+        
+        # Casos especiales para mayor realismo
+        probabilidad_proyecto_grande = random.random()
+        if probabilidad_proyecto_grande < 0.15:  # 15% chance de proyecto grande
+            monto_ajustado *= random.uniform(1.5, 2.2)  # Proyectos 50-120% más caros
+        elif probabilidad_proyecto_grande > 0.85:  # 15% chance de proyecto pequeño
+            monto_ajustado *= random.uniform(0.3, 0.6)  # Proyectos 30-70% más baratos
+        
+        # Redondear a centenas y asegurar mínimo realista
+        monto_final = max(1500, round(monto_ajustado / 100) * 100)
+        return monto_final
     
     def generar_proyectos(self, cantidad_proyectos, duracion_promedio=None):
         """Genera lista de proyectos"""
@@ -192,8 +206,15 @@ class SimuladorProyectos:
         """Convierte datos reales a DataFrame"""
         data = []
         for i, p in enumerate(self.datos_reales['proyectos'], 1):
-            # Estimar duración basada en monto (para comparación visual)
-            duracion_estimada = max(1, round(p['monto'] / 800))  # Usando tarifa promedio de 800/día
+            # Estimar duración de manera más realista
+            # Proyectos de mayor monto tienden a durar un poco más, pero no linealmente
+            duracion_base = random.randint(4, 12)  # Duración base aleatoria
+            if p['monto'] > 10000:  # Proyectos grandes
+                duracion_estimada = duracion_base + random.randint(1, 4)
+            elif p['monto'] < 4000:  # Proyectos pequeños
+                duracion_estimada = max(2, duracion_base - random.randint(1, 3))
+            else:
+                duracion_estimada = duracion_base
             
             data.append({
                 'N°': i,
@@ -204,7 +225,77 @@ class SimuladorProyectos:
                 'Estado': p['estado']
             })
         
-        return pd.DataFrame(data)
+    def analizar_duraciones(self):
+        """Analiza las duraciones generadas y compara con lógica anterior"""
+        if not self.proyectos:
+            return {}
+        
+        duraciones = [p.duracion for p in self.proyectos]
+        montos = [p.monto for p in self.proyectos]
+        
+        # Estadísticas de duración actual
+        duracion_min = min(duraciones)
+        duracion_max = max(duraciones)
+        duracion_promedio = sum(duraciones) / len(duraciones)
+        duracion_mediana = sorted(duraciones)[len(duraciones)//2]
+        variabilidad_duracion = max(duraciones) - min(duraciones)
+        
+        # Simular lo que habrían sido las duraciones con lógica antigua (basada en precio)
+        duraciones_antiguas = []
+        for monto in montos:
+            # Lógica antigua invertida: duracion = (monto - costo_fijo) / tarifa_promedio
+            tarifa_promedio = 600  # Promedio de 400-800
+            costo_fijo_promedio = 1250  # Promedio de 500-2000
+            duracion_antigua = max(1, round((monto - costo_fijo_promedio) / tarifa_promedio))
+            duraciones_antiguas.append(duracion_antigua)
+        
+        duracion_antigua_promedio = sum(duraciones_antiguas) / len(duraciones_antiguas)
+        variabilidad_antigua = max(duraciones_antiguas) - min(duraciones_antiguas)
+        
+        # Correlación precio-tiempo (nueva vs antigua)
+        correlacion_actual = self.calcular_correlacion(duraciones, montos)
+        correlacion_antigua = self.calcular_correlacion(duraciones_antiguas, montos)
+        
+        return {
+            'actual': {
+                'promedio': round(duracion_promedio, 1),
+                'minimo': duracion_min,
+                'maximo': duracion_max,
+                'mediana': duracion_mediana,
+                'variabilidad': variabilidad_duracion,
+                'correlacion_precio': round(correlacion_actual, 3)
+            },
+            'antigua_logica': {
+                'promedio': round(duracion_antigua_promedio, 1),
+                'minimo': min(duraciones_antiguas),
+                'maximo': max(duraciones_antiguas),
+                'variabilidad': variabilidad_antigua,
+                'correlacion_precio': round(correlacion_antigua, 3),
+                'duraciones': duraciones_antiguas
+            },
+            'comparacion': {
+                'cambio_promedio': round(duracion_promedio - duracion_antigua_promedio, 1),
+                'cambio_variabilidad': variabilidad_duracion - variabilidad_antigua,
+                'cambio_correlacion': round(correlacion_actual - correlacion_antigua, 3)
+            }
+        }
+    
+    def calcular_correlacion(self, x, y):
+        """Calcula correlación simple entre dos listas"""
+        if len(x) != len(y) or len(x) == 0:
+            return 0
+        
+        mean_x = sum(x) / len(x)
+        mean_y = sum(y) / len(y)
+        
+        numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(len(x)))
+        denominator_x = sum((x[i] - mean_x) ** 2 for i in range(len(x)))
+        denominator_y = sum((y[i] - mean_y) ** 2 for i in range(len(y)))
+        
+        if denominator_x == 0 or denominator_y == 0:
+            return 0
+        
+        return numerator / (denominator_x * denominator_y) ** 0.5
     
     def obtener_dataframe(self):
         """Convierte proyectos a DataFrame para mostrar en tabla"""
@@ -482,6 +573,167 @@ def main():
             
             st.caption("📝 Los proyectos por mes están multiplicados por 1000 para mejor visualización en el gráfico")
     
+    # Análisis de duraciones
+    st.subheader("⏱️ Análisis de Duraciones de Proyectos")
+    analisis_duraciones = st.session_state.simulador.analizar_duraciones()
+    
+    if analisis_duraciones:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📊 Distribución de Duraciones Actual")
+            
+            # Métricas de duración actual
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("Promedio", f"{analisis_duraciones['actual']['promedio']} días")
+            with col_b:
+                st.metric("Rango", f"{analisis_duraciones['actual']['minimo']}-{analisis_duraciones['actual']['maximo']} días")
+            with col_c:
+                st.metric("Variabilidad", f"{analisis_duraciones['actual']['variabilidad']} días")
+            
+            # Gráfico de distribución actual
+            duraciones_actuales = [p.duracion for p in st.session_state.simulador.proyectos]
+            fig_duracion_actual = px.histogram(
+                x=duraciones_actuales,
+                nbins=8,
+                title="Distribución Actual de Duraciones",
+                labels={'x': 'Duración (días)', 'y': 'Cantidad de Proyectos'},
+                color_discrete_sequence=['#3498db']
+            )
+            fig_duracion_actual.update_layout(showlegend=False, height=300)
+            st.plotly_chart(fig_duracion_actual, use_container_width=True)
+        
+        with col2:
+            st.markdown("### 🔄 Comparación con Lógica Anterior")
+            
+            # Métricas comparativas
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                cambio_prom = analisis_duraciones['comparacion']['cambio_promedio']
+                st.metric(
+                    "Cambio Promedio", 
+                    f"{cambio_prom:+.1f} días",
+                    delta=f"Antes: {analisis_duraciones['antigua_logica']['promedio']} días"
+                )
+            with col_b:
+                cambio_var = analisis_duraciones['comparacion']['cambio_variabilidad']
+                st.metric(
+                    "Cambio Variabilidad", 
+                    f"{cambio_var:+.0f} días",
+                    delta=f"Antes: {analisis_duraciones['antigua_logica']['variabilidad']} días"
+                )
+            with col_c:
+                cambio_corr = analisis_duraciones['comparacion']['cambio_correlacion']
+                st.metric(
+                    "Correlación Precio-Tiempo", 
+                    f"{analisis_duraciones['actual']['correlacion_precio']}",
+                    delta=f"{cambio_corr:+.3f} vs lógica anterior"
+                )
+            
+            # Gráfico comparativo de distribuciones
+            fig_comparacion_duraciones = go.Figure()
+            
+            # Distribución actual
+            fig_comparacion_duraciones.add_trace(go.Histogram(
+                x=duraciones_actuales,
+                name='Nueva Lógica',
+                opacity=0.7,
+                marker_color='#3498db',
+                nbinsx=8
+            ))
+            
+            # Distribución que habría sido con lógica antigua
+            fig_comparacion_duraciones.add_trace(go.Histogram(
+                x=analisis_duraciones['antigua_logica']['duraciones'],
+                name='Lógica Anterior',
+                opacity=0.7,
+                marker_color='#e74c3c',
+                nbinsx=8
+            ))
+            
+            fig_comparacion_duraciones.update_layout(
+                title="Comparación de Distribuciones",
+                xaxis_title="Duración (días)",
+                yaxis_title="Cantidad de Proyectos",
+                barmode='overlay',
+                height=300
+            )
+            
+            st.plotly_chart(fig_comparacion_duraciones, use_container_width=True)
+        
+        # Interpretación de resultados
+        st.markdown("### 🔍 Interpretación de Cambios")
+        
+        correlacion_actual = analisis_duraciones['actual']['correlacion_precio']
+        correlacion_anterior = analisis_duraciones['antigua_logica']['correlacion_precio']
+        
+        if abs(correlacion_actual) < abs(correlacion_anterior):
+            correlacion_texto = "✅ **Menos dependiente del tiempo**: Los precios ahora son más realistas y menos predecibles por duración"
+        else:
+            correlacion_texto = "⚠️ **Aún hay correlación**: Los precios siguen relacionados con el tiempo"
+        
+        cambio_variabilidad = analisis_duraciones['comparacion']['cambio_variabilidad']
+        if cambio_variabilidad > 0:
+            variabilidad_texto = "📈 **Mayor diversidad**: Ahora hay más variación en las duraciones (más realista)"
+        else:
+            variabilidad_texto = "📉 **Menor diversidad**: Las duraciones son más homogéneas"
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"""
+            {correlacion_texto}
+            
+            **Correlación anterior**: {correlacion_anterior:.3f}
+            **Correlación actual**: {correlacion_actual:.3f}
+            
+            *Valores cercanos a 0 = menos correlación (mejor)*
+            """)
+        
+        with col2:
+            st.info(f"""
+            {variabilidad_texto}
+            
+            **Rango anterior**: {analisis_duraciones['antigua_logica']['variabilidad']} días
+            **Rango actual**: {analisis_duraciones['actual']['variabilidad']} días
+            
+            *Mayor rango = mayor diversidad de proyectos*
+            """)
+        
+        # Tabla comparativa detallada
+        with st.expander("📋 Tabla Comparativa Detallada"):
+            tabla_comparativa = pd.DataFrame({
+                'Métrica': [
+                    'Duración Promedio (días)', 
+                    'Duración Mínima (días)', 
+                    'Duración Máxima (días)',
+                    'Variabilidad (días)',
+                    'Correlación con Precio'
+                ],
+                'Lógica Anterior (basada en precio)': [
+                    f"{analisis_duraciones['antigua_logica']['promedio']}",
+                    f"{analisis_duraciones['antigua_logica']['minimo']}",
+                    f"{analisis_duraciones['antigua_logica']['maximo']}",
+                    f"{analisis_duraciones['antigua_logica']['variabilidad']}",
+                    f"{analisis_duraciones['antigua_logica']['correlacion_precio']:.3f}"
+                ],
+                'Nueva Lógica (basada en promedio real)': [
+                    f"{analisis_duraciones['actual']['promedio']}",
+                    f"{analisis_duraciones['actual']['minimo']}",
+                    f"{analisis_duraciones['actual']['maximo']}",
+                    f"{analisis_duraciones['actual']['variabilidad']}",
+                    f"{analisis_duraciones['actual']['correlacion_precio']:.3f}"
+                ],
+                'Cambio': [
+                    f"{analisis_duraciones['comparacion']['cambio_promedio']:+.1f}",
+                    "Variable",
+                    "Variable",
+                    f"{analisis_duraciones['comparacion']['cambio_variabilidad']:+.0f}",
+                    f"{analisis_duraciones['comparacion']['cambio_correlacion']:+.3f}"
+                ]
+            })
+            st.dataframe(tabla_comparativa, hide_index=True, use_container_width=True)
+    
     # Tabla de proyectos
     st.subheader("📋 Detalle de Proyectos")
     df = st.session_state.simulador.obtener_dataframe()
@@ -547,10 +799,12 @@ def main():
         - Al cambiar la cantidad de proyectos, la duración se ajusta automáticamente
         - Mantiene el objetivo de ~30 días de trabajo mensual (±7 días de margen)
         
-        **Cálculo de Montos:**
-        - Tarifa base: 400-800 soles por día
-        - Costo fijo adicional: 500-2,000 soles por proyecto
-        - Montos redondeados a centenas
+        **Cálculo de Montos (Nuevo Sistema):**
+        - Base: Promedio real S/. 7,250 (datos históricos)
+        - Variación principal: ±50% del promedio (permite diversidad realista)
+        - Ajuste por tiempo: ±1.5% por día adicional/menor a 8 días
+        - Casos especiales: 15% proyectos grandes (+50-120%), 15% proyectos pequeños (-30-70%)
+        - Monto mínimo: S/. 1,500
         
         **Sistema de Ganancias:**
         - Margen de ganancia: 20-35% sobre el monto total
